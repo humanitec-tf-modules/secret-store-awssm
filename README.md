@@ -79,6 +79,8 @@ locals {
 data "aws_caller_identity" "current" {}
 data "aws_partition" "current" {}
 
+
+❌❌ TODO consider not showing the helm_release because we will use the Operator module going forward
 # Apply the Operator before adding the module, see "Installation order"
 resource "helm_release" "humanitec_operator" {
   name       = "humanitec-operator"
@@ -134,6 +136,7 @@ module "my_awssm_secret_store" {
   auth_method = "irsa"
 }
 
+❌❌ TODO consider not showing the helm_release because we will use the Operator module going forward
 resource "helm_release" "humanitec_operator" {
   name       = "humanitec-operator"
   namespace  = "humanitec-operator-system"

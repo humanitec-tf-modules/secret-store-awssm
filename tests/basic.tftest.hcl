@@ -235,8 +235,8 @@ run "defaults" {
     error_message = "Secret store should use the region of the aws provider by default"
   }
   assert {
-    condition     = length(kubernetes_manifest.secret_store.manifest.spec.awssm.auth) == 0
-    error_message = "Secret store should have an empty auth configuration with an IAM role"
+    condition     = kubernetes_manifest.secret_store.manifest.spec.awssm.auth == {}
+    error_message = "Secret store should have an empty auth object with an IAM role. A map cannot be converted to the SecretStore CRD schema by kubernetes_manifest"
   }
 
   # Outputs
@@ -380,8 +380,8 @@ run "irsa" {
 
   # Secret store
   assert {
-    condition     = length(kubernetes_manifest.secret_store.manifest.spec.awssm.auth) == 0
-    error_message = "Secret store should have an empty auth configuration with IRSA"
+    condition     = kubernetes_manifest.secret_store.manifest.spec.awssm.auth == {}
+    error_message = "Secret store should have an empty auth object with IRSA. A map cannot be converted to the SecretStore CRD schema by kubernetes_manifest"
   }
 
   # Outputs
@@ -773,11 +773,11 @@ run "complete_create_user" {
 
   # Secret store
   assert {
-    condition = kubernetes_manifest.secret_store.manifest.spec.awssm.auth == tomap({
+    condition = kubernetes_manifest.secret_store.manifest.spec.awssm.auth == {
       accessKeyIDSecretRef     = { name = "my-credentials", key = "access_key_id" }
       secretAccessKeySecretRef = { name = "my-credentials", key = "secret_access_key" }
-    })
-    error_message = "Secret store should reference the access key in the credentials Secret"
+    }
+    error_message = "Secret store should reference the access key in the credentials Secret, as an object"
   }
 
   # Outputs

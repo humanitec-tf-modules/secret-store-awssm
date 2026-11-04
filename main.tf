@@ -114,17 +114,24 @@ locals {
     },
     var.secret_store_default ? { labels = { "app.humanitec.io/default-store" = "true" } } : {},
   )
-  # With EKS Pod Identity or IRSA, the Operator uses the IAM role of its service account, which requires no auth configuration
-  secret_store_auth = local.use_iam_user ? {
-    accessKeyIDSecretRef = {
-      name = local.iam_user_credentials_secret_name
-      key  = "access_key_id"
+  # Authentication of the secret store, depending on the auth method.
+  # With an IAM user, the store references the access key in the credentials Secret.
+  # With EKS Pod Identity or IRSA, the Operator uses the IAM role of its service account, which requires an empty auth.
+  # Select the value by key instead of using a conditional: a conditional would convert both values into a map,
+  # and kubernetes_manifest cannot convert an empty map into the auth object of the SecretStore CRD.
+  secret_store_auth = {
+    iam_user = {
+      accessKeyIDSecretRef = {
+        name = local.iam_user_credentials_secret_name
+        key  = "access_key_id"
+      }
+      secretAccessKeySecretRef = {
+        name = local.iam_user_credentials_secret_name
+        key  = "secret_access_key"
+      }
     }
-    secretAccessKeySecretRef = {
-      name = local.iam_user_credentials_secret_name
-      key  = "secret_access_key"
-    }
-  } : {}
+    iam_role = {}
+  }[local.use_iam_user ? "iam_user" : "iam_role"]
 
   # Patterns for IAM role and user ARNs, also used by the iam_role_arn and iam_user_arn validations
   iam_role_arn_pattern = "^arn:aws[a-z-]*:iam::(?P<account_id>[0-9]{12}):role/(?:[^/]+/)*(?P<name>[\\w+=,.@-]+)$"
