@@ -33,6 +33,7 @@ If you install the Operator in the same OpenTofu/Terraform configuration as the 
 
 > [!NOTE]
 > **Architectural decision**
+> 
 > A provider such as [alekc/kubectl](https://registry.terraform.io/providers/alekc/kubectl), which does not require the CRD to exist at plan time, would allow a single apply. However, it would introduce another external community provider, require users to configure and pass in a third provider, and require an additional module input to order the SecretStore after the Operator installation. It would also need retry handling, as a newly installed CRD can take a moment before the API server accepts resources of its type. The module therefore accepts the two-pass limitation. It only applies when the Operator is installed in the same run as the module, e.g. on a new cluster.
 
 With IRSA, the Operator service account also needs an annotation with the ARN of the IAM role. See [Use IRSA](#use-irsa) for how to provide it.
