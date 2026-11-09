@@ -480,7 +480,7 @@ Reference the secret by its ARN in a [secret reference](https://developer.humani
 ## Requirements
 
 | Name | Version |
-| ---- | ------- |
+|------|---------|
 | <a name="requirement_terraform"></a> [terraform](#requirement\_terraform) | >= 1.11.0 |
 | <a name="requirement_aws"></a> [aws](#requirement\_aws) | >= 6.0.0, < 7.0.0 |
 | <a name="requirement_kubernetes"></a> [kubernetes](#requirement\_kubernetes) | ~> 3 |
@@ -493,7 +493,7 @@ No modules.
 ## Resources
 
 | Name | Type |
-| ---- | ---- |
+|------|------|
 | [aws_eks_pod_identity_association.operator](https://registry.terraform.io/providers/hashicorp/aws/latest/docs/resources/eks_pod_identity_association) | resource |
 | [aws_iam_access_key.operator](https://registry.terraform.io/providers/hashicorp/aws/latest/docs/resources/iam_access_key) | resource |
 | [aws_iam_policy.operator](https://registry.terraform.io/providers/hashicorp/aws/latest/docs/resources/iam_policy) | resource |
@@ -522,7 +522,7 @@ No modules.
 ## Inputs
 
 | Name | Description | Type | Default | Required |
-| ---- | ----------- | ---- | ------- | :------: |
+|------|-------------|------|---------|:--------:|
 | <a name="input_auth_method"></a> [auth\_method](#input\_auth\_method) | How the Operator authenticates against AWS Secrets Manager. `pod_identity` (recommended): the Operator assumes an IAM role via EKS Pod Identity. `irsa`: the Operator assumes an IAM role via IAM Roles for Service Accounts (IRSA). `iam_user`: the Operator uses static credentials of an IAM user, stored in a Kubernetes Secret. | `string` | `"pod_identity"` | no |
 | <a name="input_cross_account_secrets"></a> [cross\_account\_secrets](#input\_cross\_account\_secrets) | Secrets in other AWS accounts the Operator may read, each with the ARN of the KMS key encrypting the secret. Reference such a secret by its ARN in a secret reference. In the account of each secret, you must also configure the resource policy of the secret and the key policy of the KMS key yourself. Use the `cross_account_secret_resource_policy` and `cross_account_kms_key_policy` outputs to configure them. | <pre>list(object({<br/>    secret_arn  = string<br/>    kms_key_arn = string<br/>  }))</pre> | `[]` | no |
 | <a name="input_eks_cluster_name"></a> [eks\_cluster\_name](#input\_eks\_cluster\_name) | The name of the EKS cluster hosting the Operator. Required if `auth_method` is `pod_identity` and `pod_identity_association_create` is `true`, or if `auth_method` is `irsa` and `iam_role_create` is `true`. For IRSA, the cluster must be located in the account and region of the `aws` provider and have an IAM OIDC provider. Optional otherwise: if set, it is included in the `pod_identity_association` output for EKS Pod Identity, and the `iam_role_trust_policy` output is provided for IRSA. Must not be set if `auth_method` is `iam_user`. | `string` | `null` | no |
@@ -557,7 +557,7 @@ No modules.
 ## Outputs
 
 | Name | Description |
-| ---- | ----------- |
+|------|-------------|
 | <a name="output_aws_account_id"></a> [aws\_account\_id](#output\_aws\_account\_id) | ID of the AWS account of the Secrets Manager and the IAM objects. |
 | <a name="output_cross_account_kms_key_policy"></a> [cross\_account\_kms\_key\_policy](#output\_cross\_account\_kms\_key\_policy) | Key policy statement allowing the Operator to decrypt a secret, as a policy document in JSON format. Add it to the key policy of the KMS key encrypting each secret in another AWS account you want to reference, e.g. via the `source_policy_documents` of an `aws_iam_policy_document`. Do not use it as the complete key policy. |
 | <a name="output_cross_account_secret_resource_policy"></a> [cross\_account\_secret\_resource\_policy](#output\_cross\_account\_secret\_resource\_policy) | Resource policy allowing the Operator to read a secret, in JSON format. Attach it to each secret in another AWS account you want to reference. |
