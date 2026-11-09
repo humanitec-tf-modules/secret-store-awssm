@@ -65,41 +65,19 @@ kubectl rollout restart deployment -n humanitec-operator-system humanitec-operat
 
 ### Use IRSA
 
-With IRSA, the Operator service account must be annotated with the ARN of the IAM role it assumes. The module does not modify the Operator installation, so you need to set the annotation via the Helm values of the Operator. As the Operator must be installed before the module (see [Installation order](#installation-order)), there are two ways to do so.
+With IRSA, the Operator service account must be annotated with the ARN of the IAM role it assumes. The module does not modify the Operator installation, so you need to set the annotation when you install the Operator, which happens before the module runs (see [Installation order](#installation-order)).
 
-#### Recommended: Set a fixed IAM role name
-
-Set a fixed `iam_role_name` so that you know the ARN of the IAM role before running the module. This lets you set the annotation when you install the Operator, before the module creates the IAM role. Once the module has created the IAM role, the Operator can assume it without any further changes.
+Set a fixed `iam_role_name` so that you know the ARN of the IAM role at that point. Without it, the module generates a name with a random suffix that is only known after the module has run. Once the module has created the IAM role, the Operator can assume it without any further changes.
 
 ```hcl
 locals {
   operator_iam_role_name = "humanitec-operator-my-awssm"
 }
 
-data "aws_caller_identity" "current" {}
-data "aws_partition" "current" {}
-
-
-❌❌ TODO consider not showing the helm_release because we will use the Operator module going forward
-# Apply the Operator before adding the module, see "Installation order"
-resource "helm_release" "humanitec_operator" {
-  name       = "humanitec-operator"
-  namespace  = "humanitec-operator-system"
-  repository = "oci://ghcr.io/humanitec/charts"
-  chart      = "humanitec-operator"
-
-  values = [
-    yamlencode({
-      controllerManager = {
-        serviceAccount = {
-          annotations = {
-            "eks.amazonaws.com/role-arn" = "arn:${data.aws_partition.current.partition}:iam::${data.aws_caller_identity.current.account_id}:role/${local.operator_iam_role_name}"
-          }
-        }
-      }
-    })
-  ]
-}
+# When installing the Operator, annotate its service account with the ARN of the IAM role,
+# e.g. through the Helm value "controllerManager.serviceAccount.annotations":
+#
+#   "eks.amazonaws.com/role-arn" = "arn:aws:iam::<account-id>:role/${local.operator_iam_role_name}"
 
 module "my_awssm_secret_store" {
   source = "github.com/humanitec-tf-modules/secret-store-awssm?ref=vX.Y.Z"
@@ -117,49 +95,6 @@ module "my_awssm_secret_store" {
 ```
 
 If you also set `iam_role_path`, include the path in the ARN, e.g. `role/humanitec/humanitec-operator-my-awssm` for the path `/humanitec/`.
-
-#### Alternative: Use the generated IAM role name
-
-If you do not set `iam_role_name`, the module generates a name with a random suffix, so the ARN is only known after running the module. In this case, run the module first and then update the Helm values of the existing Operator installation with the annotations from the `operator_serviceaccount_annotations` output:
-
-```hcl
-module "my_awssm_secret_store" {
-  source = "github.com/humanitec-tf-modules/secret-store-awssm?ref=vX.Y.Z"
-  providers = {
-    aws        = aws
-    kubernetes = kubernetes
-  }
-
-  secret_store_id  = "my-awssm"
-  eks_cluster_name = aws_eks_cluster.my_eks_cluster.name
-
-  auth_method = "irsa"
-}
-
-❌❌ TODO consider not showing the helm_release because we will use the Operator module going forward
-resource "helm_release" "humanitec_operator" {
-  name       = "humanitec-operator"
-  namespace  = "humanitec-operator-system"
-  repository = "oci://ghcr.io/humanitec/charts"
-  chart      = "humanitec-operator"
-
-  values = [
-    yamlencode({
-      controllerManager = {
-        serviceAccount = {
-          annotations = module.my_awssm_secret_store.operator_serviceaccount_annotations
-        }
-      }
-    })
-  ]
-}
-```
-
-Then restart the Operator to pick up the IAM role:
-
-```shell
-kubectl rollout restart deployment -n humanitec-operator-system humanitec-operator-controller-manager
-```
 
 ### One IAM role for all secret stores
 
