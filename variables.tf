@@ -46,7 +46,7 @@ variable "secrets_manager_region" {
   default     = null
 }
 variable "secret_name_prefix" {
-  description = "Prefix of the names of the secrets in the Secrets Manager the Operator may access, e.g. `humanitec/`. If not set, the Operator may access all secrets in the Secrets Manager. Use it if you organize your secrets hierarchically."
+  description = "Prefix of the names of the secrets in the Secrets Manager the Operator may access, e.g. `humanitec/`. If not set, the Operator may access all secrets in the Secrets Manager. Use it if you organize your secrets hierarchically. For the default store, the Operator may also access the secrets with the prefix `resources/`, where it stores resource cookies."
   type        = string
   nullable    = true
   default     = null

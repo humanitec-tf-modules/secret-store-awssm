@@ -161,29 +161,59 @@ Then restart the Operator to pick up the IAM role:
 kubectl rollout restart deployment -n humanitec-operator-system humanitec-operator-controller-manager
 ```
 
+### One IAM role for all secret stores
+
+> [!IMPORTANT]
+> The Operator uses exactly one IAM role. With EKS Pod Identity, this is the role of the Pod Identity association of the Operator service account, and EKS allows only one association per service account. With IRSA, this is the role annotated on the Operator service account. All secret stores on the cluster that use EKS Pod Identity or IRSA therefore share that IAM role. Let at most one instance of the module create the IAM role and the EKS Pod Identity association, preferably the one for the `default` store, and pass the IAM role in to all other instances with `iam_role_create = false`, `iam_role_arn`, and `pod_identity_association_create = false`. See [Non-default secret store](#non-default-secret-store).
+>
+> Each instance of the module still creates its own IAM policy and attaches it to the shared IAM role, so the Operator has the combined access of all these secret stores through each of them. Each policy counts towards the [quota of managed policies per IAM role](https://docs.aws.amazon.com/IAM/latest/UserGuide/reference_iam-quotas.html), which is 10 by default.
+>
+> This does not apply to `auth_method = "iam_user"`, where each secret store references its own credentials. Use IAM users for secret stores that need a separate identity, such as [Environment-local secret stores](#environment-local-secret-stores).
+
 ### Non-default secret store
 
 Set `secret_store_default` to `false` to create a cluster-wide secret store that is not the default store, e.g. if you already have a default store. The Operator gets read-only access to this store.
 
+This configuration adds a non-default secret store for the Secrets Manager in a second region next to the [default secret store](#common-usage-default-secret-store-with-eks-pod-identity) created by another instance of the module. As the [Operator uses only one IAM role](#one-iam-role-for-all-secret-stores), it reuses the IAM role and EKS Pod Identity association of the default store, and only attaches a read-only IAM policy for the second region to the IAM role.
+
 ```hcl
-module "my_awssm_secret_store" {
+module "my_other_awssm_secret_store" {
   source = "github.com/humanitec-tf-modules/secret-store-awssm?ref=vX.Y.Z"
   providers = {
     aws        = aws
     kubernetes = kubernetes
   }
 
-  secret_store_id      = "my-awssm"
-  secret_store_default = false
-  eks_cluster_name     = aws_eks_cluster.my_eks_cluster.name
+  secret_store_id        = "my-other-awssm"
+  secret_store_default   = false
+  secrets_manager_region = "eu-west-1"
+
+  iam_role_create                 = false
+  iam_role_arn                    = module.my_awssm_secret_store.iam_role_arn
+  pod_identity_association_create = false
 }
 ```
 
-### Environment-local secret store
+### Environment-local secret stores
 
-This configuration creates a secret store in the namespace of an Environment, so that only Deployments into that namespace can use it. An Environment-local secret store cannot be the default store, so `secret_store_default` must be set to `false`. The Operator gets read-only access to this store.
+An Environment-local secret store is located in the namespace of an Environment, so that only Deployments into that namespace can use it. It cannot be the default store, so `secret_store_default` must be set to `false`, and the Operator gets read-only access to it. The Operator always needs a cluster-wide [default secret store](https://developer.humanitec.com/platform-orchestrator/docs/integration-and-extensions/humanitec-operator/architecture/#the-default-secret-store) in addition to any Environment-local stores.
+
+Environment-local stores only isolate the Environments from each other if each store uses a separate IAM identity, with access to the secrets of its Environment only. With EKS Pod Identity or IRSA, all secret stores [share the one IAM role of the Operator](#one-iam-role-for-all-secret-stores), including the default store with its read/write access. The `SecretStore` resource cannot name another IAM role for the Operator to assume either. The only separate identity is therefore an IAM user with static credentials, so the examples use `auth_method = "iam_user"`.
+
+Each instance of the module then creates or uses a dedicated IAM user, a Kubernetes Secret holding its access key in the Environment namespace, and a read-only IAM policy attached to the IAM user. The secret stores do not share any IAM objects, so removing one secret store does not affect the others. All inputs about the IAM role and the EKS Pod Identity association can keep their defaults, and `eks_cluster_name` must not be set.
+
+The access of the cluster-wide stores also matters, as any Deployment can use them. If the default store can read all secrets of the Secrets Manager, so can every Environment through it. Therefore, keep the secrets of each Environment under its own name prefix, and restrict the default store to another prefix with `secret_name_prefix`. For a default store with a prefix, the module also grants access to the prefix `resources/`, under which the Operator stores [resource cookies](https://developer.humanitec.com/platform-orchestrator/guides/platform-engineers/security/connect-secret-stores/connect-to-aws-secrets-manager/#resource-cookies), so do not use it for the secrets of an Environment. Alternatively, place the secrets of the Environments in a different region than the default store.
+
+#### One IAM user per Environment
+
+This configuration creates the default secret store restricted to the secrets under `shared/` and the resource cookies, and one Environment-local secret store per Environment namespace. Each Environment-local store has its own IAM user, which can only read the secrets under the prefix of its Environment, e.g. `my-app-development/`.
 
 ```hcl
+locals {
+  environment_namespaces = toset(["my-app-development", "my-app-staging"])
+}
+
+# Default secret store, restricted to shared secrets and the resource cookies of the Operator
 module "my_awssm_secret_store" {
   source = "github.com/humanitec-tf-modules/secret-store-awssm?ref=vX.Y.Z"
   providers = {
@@ -191,17 +221,81 @@ module "my_awssm_secret_store" {
     kubernetes = kubernetes
   }
 
-  secret_store_id           = "my-awssm"
+  secret_store_id    = "my-awssm"
+  secret_name_prefix = "shared/"
+  eks_cluster_name   = aws_eks_cluster.my_eks_cluster.name
+}
+
+# Environment-local secret stores, each with its own IAM user
+module "my_environment_awssm_secret_store" {
+  source = "github.com/humanitec-tf-modules/secret-store-awssm?ref=vX.Y.Z"
+  providers = {
+    aws        = aws
+    kubernetes = kubernetes
+  }
+  for_each = local.environment_namespaces
+
+  secret_store_id           = "my-awssm-${each.key}"
   secret_store_default      = false
   secret_store_cluster_wide = false
-  secret_store_namespace    = "my-app-development"
-  eks_cluster_name          = aws_eks_cluster.my_eks_cluster.name
+  secret_store_namespace    = each.key
+  secret_name_prefix        = "${each.key}/"
+
+  auth_method = "iam_user"
+}
+```
+
+> [!WARNING]
+> The Kubernetes Secret holding the access key is located in the Environment namespace. Anyone who can read Secrets in that namespace can use the IAM user, and thus read the secrets of that Environment. The secret access key is also stored in the OpenTofu/Terraform state, see [Use an IAM user with static credentials](#use-an-iam-user-with-static-credentials). To keep it out of the state, bring your own IAM users as shown below.
+
+#### Bring your own IAM users
+
+This configuration uses your own IAM user and access key per Environment, as described in [Bring your own IAM user](#bring-your-own-iam-user). The module attaches a read-only IAM policy for the secrets of the Environment to each IAM user. It reads the secret access keys from ephemeral sources, so they are not stored in the state.
+
+```hcl
+locals {
+  environment_iam_users = {
+    "my-app-development" = {
+      arn           = "arn:aws:iam::123456789012:user/humanitec-operator-my-app-development"
+      access_key_id = "AKIAIOSFODNN7EXAMPLE"
+    }
+    "my-app-staging" = {
+      arn           = "arn:aws:iam::123456789012:user/humanitec-operator-my-app-staging"
+      access_key_id = "AKIAI44QH8DHBEXAMPLE"
+    }
+  }
+}
+
+ephemeral "aws_secretsmanager_secret_version" "operator_user_access_key" {
+  for_each  = local.environment_iam_users
+  secret_id = "humanitec/operator-user-access-key-${each.key}"
+}
+
+module "my_environment_awssm_secret_store" {
+  source = "github.com/humanitec-tf-modules/secret-store-awssm?ref=vX.Y.Z"
+  providers = {
+    aws        = aws
+    kubernetes = kubernetes
+  }
+  for_each = local.environment_iam_users
+
+  secret_store_id           = "my-awssm-${each.key}"
+  secret_store_default      = false
+  secret_store_cluster_wide = false
+  secret_store_namespace    = each.key
+  secret_name_prefix        = "${each.key}/"
+
+  auth_method                = "iam_user"
+  iam_user_create            = false
+  iam_user_arn               = each.value.arn
+  iam_user_access_key_id     = each.value.access_key_id
+  iam_user_secret_access_key = ephemeral.aws_secretsmanager_secret_version.operator_user_access_key[each.key].secret_string
 }
 ```
 
 ### Restrict access to a path and use a different region
 
-This configuration creates the default secret store for a Secrets Manager in a region other than the one of the `aws` provider, and restricts the Operator to secrets whose names start with `humanitec/`. It also customizes the names, path, and tags of the IAM objects.
+This configuration creates the default secret store for a Secrets Manager in a region other than the one of the `aws` provider, and restricts the Operator to secrets whose names start with `humanitec/`. As this is the default store, the Operator also gets access to the secrets starting with `resources/`, where it stores its [resource cookies](https://developer.humanitec.com/platform-orchestrator/guides/platform-engineers/security/connect-secret-stores/connect-to-aws-secrets-manager/#resource-cookies). It also customizes the names, path, and tags of the IAM objects.
 
 ```hcl
 module "my_awssm_secret_store" {
@@ -386,7 +480,7 @@ Reference the secret by its ARN in a [secret reference](https://developer.humani
 ## Requirements
 
 | Name | Version |
-|------|---------|
+| ---- | ------- |
 | <a name="requirement_terraform"></a> [terraform](#requirement\_terraform) | >= 1.11.0 |
 | <a name="requirement_aws"></a> [aws](#requirement\_aws) | >= 6.0.0, < 7.0.0 |
 | <a name="requirement_kubernetes"></a> [kubernetes](#requirement\_kubernetes) | ~> 3 |
@@ -399,7 +493,7 @@ No modules.
 ## Resources
 
 | Name | Type |
-|------|------|
+| ---- | ---- |
 | [aws_eks_pod_identity_association.operator](https://registry.terraform.io/providers/hashicorp/aws/latest/docs/resources/eks_pod_identity_association) | resource |
 | [aws_iam_access_key.operator](https://registry.terraform.io/providers/hashicorp/aws/latest/docs/resources/iam_access_key) | resource |
 | [aws_iam_policy.operator](https://registry.terraform.io/providers/hashicorp/aws/latest/docs/resources/iam_policy) | resource |
@@ -428,7 +522,7 @@ No modules.
 ## Inputs
 
 | Name | Description | Type | Default | Required |
-|------|-------------|------|---------|:--------:|
+| ---- | ----------- | ---- | ------- | :------: |
 | <a name="input_auth_method"></a> [auth\_method](#input\_auth\_method) | How the Operator authenticates against AWS Secrets Manager. `pod_identity` (recommended): the Operator assumes an IAM role via EKS Pod Identity. `irsa`: the Operator assumes an IAM role via IAM Roles for Service Accounts (IRSA). `iam_user`: the Operator uses static credentials of an IAM user, stored in a Kubernetes Secret. | `string` | `"pod_identity"` | no |
 | <a name="input_cross_account_secrets"></a> [cross\_account\_secrets](#input\_cross\_account\_secrets) | Secrets in other AWS accounts the Operator may read, each with the ARN of the KMS key encrypting the secret. Reference such a secret by its ARN in a secret reference. In the account of each secret, you must also configure the resource policy of the secret and the key policy of the KMS key yourself. Use the `cross_account_secret_resource_policy` and `cross_account_kms_key_policy` outputs to configure them. | <pre>list(object({<br/>    secret_arn  = string<br/>    kms_key_arn = string<br/>  }))</pre> | `[]` | no |
 | <a name="input_eks_cluster_name"></a> [eks\_cluster\_name](#input\_eks\_cluster\_name) | The name of the EKS cluster hosting the Operator. Required if `auth_method` is `pod_identity` and `pod_identity_association_create` is `true`, or if `auth_method` is `irsa` and `iam_role_create` is `true`. For IRSA, the cluster must be located in the account and region of the `aws` provider and have an IAM OIDC provider. Optional otherwise: if set, it is included in the `pod_identity_association` output for EKS Pod Identity, and the `iam_role_trust_policy` output is provided for IRSA. Must not be set if `auth_method` is `iam_user`. | `string` | `null` | no |
@@ -453,7 +547,7 @@ No modules.
 | <a name="input_operator_namespace"></a> [operator\_namespace](#input\_operator\_namespace) | Name of the Kubernetes namespace of the Humanitec Operator. | `string` | `"humanitec-operator-system"` | no |
 | <a name="input_operator_serviceaccount"></a> [operator\_serviceaccount](#input\_operator\_serviceaccount) | Name of the Kubernetes service account of the Humanitec Operator. Used for the EKS Pod Identity association if `auth_method` is `pod_identity`, and in the IRSA trust policy if `auth_method` is `irsa`. | `string` | `"humanitec-operator-controller-manager"` | no |
 | <a name="input_pod_identity_association_create"></a> [pod\_identity\_association\_create](#input\_pod\_identity\_association\_create) | Whether to create the EKS Pod Identity association linking the Operator service account to the IAM role. Only used if `auth_method` is `pod_identity`. Set to `false` if you manage the association yourself. Use the `pod_identity_association` output to configure it. | `bool` | `true` | no |
-| <a name="input_secret_name_prefix"></a> [secret\_name\_prefix](#input\_secret\_name\_prefix) | Prefix of the names of the secrets in the Secrets Manager the Operator may access, e.g. `humanitec/`. If not set, the Operator may access all secrets in the Secrets Manager. Use it if you organize your secrets hierarchically. | `string` | `null` | no |
+| <a name="input_secret_name_prefix"></a> [secret\_name\_prefix](#input\_secret\_name\_prefix) | Prefix of the names of the secrets in the Secrets Manager the Operator may access, e.g. `humanitec/`. If not set, the Operator may access all secrets in the Secrets Manager. Use it if you organize your secrets hierarchically. For the default store, the Operator may also access the secrets with the prefix `resources/`, where it stores resource cookies. | `string` | `null` | no |
 | <a name="input_secret_store_cluster_wide"></a> [secret\_store\_cluster\_wide](#input\_secret\_store\_cluster\_wide) | Whether the secret store is cluster-wide, i.e. usable by all Deployments onto the cluster. A cluster-wide store is created in the `operator_namespace`. If `false`, the store is Environment-local and created in `secret_store_namespace`, so it can only be used by Deployments into that namespace. | `bool` | `true` | no |
 | <a name="input_secret_store_default"></a> [secret\_store\_default](#input\_secret\_store\_default) | Whether the secret store is the default secret store of the Operator. Only a cluster-wide secret store can be the default store, so set it to `false` for an Environment-local store. The Operator gets read/write access to the default store, and read-only access to any other store. | `bool` | `true` | no |
 | <a name="input_secret_store_id"></a> [secret\_store\_id](#input\_secret\_store\_id) | ID of the secret store. It is the name of the Kubernetes `SecretStore` resource and the `store` value used in secret references. If you also register the secret store with the Platform Orchestrator, use the same ID there. If not set, the module generates an ID in the pattern `awssm-<random>`, with `<random>` being a random string of four lowercase letters, e.g. `awssm-kxqp`. Use the `secret_store_id` output to read it. | `string` | `null` | no |
@@ -463,7 +557,7 @@ No modules.
 ## Outputs
 
 | Name | Description |
-|------|-------------|
+| ---- | ----------- |
 | <a name="output_aws_account_id"></a> [aws\_account\_id](#output\_aws\_account\_id) | ID of the AWS account of the Secrets Manager and the IAM objects. |
 | <a name="output_cross_account_kms_key_policy"></a> [cross\_account\_kms\_key\_policy](#output\_cross\_account\_kms\_key\_policy) | Key policy statement allowing the Operator to decrypt a secret, as a policy document in JSON format. Add it to the key policy of the KMS key encrypting each secret in another AWS account you want to reference, e.g. via the `source_policy_documents` of an `aws_iam_policy_document`. Do not use it as the complete key policy. |
 | <a name="output_cross_account_secret_resource_policy"></a> [cross\_account\_secret\_resource\_policy](#output\_cross\_account\_secret\_resource\_policy) | Resource policy allowing the Operator to read a secret, in JSON format. Attach it to each secret in another AWS account you want to reference. |

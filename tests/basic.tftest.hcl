@@ -470,6 +470,33 @@ run "non_default_store" {
   }
 }
 
+run "non_default_store_with_prefix" {
+  command = apply
+
+  variables {
+    secret_store_default = false
+    secret_name_prefix   = "humanitec/"
+  }
+
+  assert {
+    condition     = toset(data.aws_iam_policy_document.operator.statement[0].resources) == toset(["arn:aws:secretsmanager:eu-west-1:123456789012:secret:humanitec/*"])
+    error_message = "IAM policy of a non-default store should only cover secret_name_prefix, without the resource cookies"
+  }
+}
+
+run "default_store_with_resources_prefix" {
+  command = apply
+
+  variables {
+    secret_name_prefix = "resources/"
+  }
+
+  assert {
+    condition     = local.secret_store_resource_arns == ["arn:aws:secretsmanager:eu-west-1:123456789012:secret:resources/*"]
+    error_message = "IAM policy should list the resource cookies only once if secret_name_prefix is resources/"
+  }
+}
+
 run "environment_local_store" {
   command = apply
 
@@ -589,8 +616,11 @@ run "complete_create_role_irsa" {
     error_message = "IAM policy should use iam_policy_name, iam_policy_path and iam_policy_tags"
   }
   assert {
-    condition     = toset(data.aws_iam_policy_document.operator.statement[0].resources) == toset(["arn:aws:secretsmanager:us-east-1:123456789012:secret:humanitec/*"])
-    error_message = "IAM policy should be restricted to secrets_manager_region and secret_name_prefix"
+    condition = toset(data.aws_iam_policy_document.operator.statement[0].resources) == toset([
+      "arn:aws:secretsmanager:us-east-1:123456789012:secret:humanitec/*",
+      "arn:aws:secretsmanager:us-east-1:123456789012:secret:resources/*",
+    ])
+    error_message = "IAM policy should be restricted to secrets_manager_region and secret_name_prefix, plus the resource cookies of the default store"
   }
 
   # IAM role

@@ -42,15 +42,23 @@ locals {
     "secretsmanager:PutSecretValue",
     "secretsmanager:RestoreSecret",
   ] : ["secretsmanager:GetSecretValue"]
-  secret_store_resource_arn = join(":", [
-    "arn",
-    data.aws_partition.current.partition,
-    "secretsmanager",
-    local.secrets_manager_region,
-    data.aws_caller_identity.current.account_id,
-    "secret",
-    "${var.secret_name_prefix != null ? var.secret_name_prefix : ""}*",
-  ])
+  # Names of the secrets the Operator may access, as patterns. The Operator stores resource cookies
+  # in the default store under "resources/", independent of the secret name prefix
+  secret_store_secret_name_patterns = distinct(concat(
+    ["${var.secret_name_prefix != null ? var.secret_name_prefix : ""}*"],
+    var.secret_store_default && var.secret_name_prefix != null ? ["resources/*"] : [],
+  ))
+  secret_store_resource_arns = [
+    for pattern in local.secret_store_secret_name_patterns : join(":", [
+      "arn",
+      data.aws_partition.current.partition,
+      "secretsmanager",
+      local.secrets_manager_region,
+      data.aws_caller_identity.current.account_id,
+      "secret",
+      pattern,
+    ])
+  ]
 
   cross_account_secret_arns  = distinct([for s in var.cross_account_secrets : s.secret_arn])
   cross_account_kms_key_arns = distinct([for s in var.cross_account_secrets : s.kms_key_arn])
@@ -146,7 +154,7 @@ data "aws_iam_policy_document" "operator" {
     sid       = "SecretStoreAccess"
     effect    = "Allow"
     actions   = local.secret_store_actions
-    resources = [local.secret_store_resource_arn]
+    resources = local.secret_store_resource_arns
   }
 
   dynamic "statement" {
