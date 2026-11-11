@@ -69,6 +69,8 @@ With IRSA, the Operator service account must be annotated with the ARN of the IA
 
 Set a fixed `iam_role_name` so that you know the ARN of the IAM role at that point. Without it, the module generates a name with a random suffix that is only known after the module has run. Once the module has created the IAM role, the Operator can assume it without any further changes.
 
+The module also returns the annotation in its `operator_serviceaccount_annotations` output. You cannot use the output for the initial installation of the Operator, as the Operator would then depend on the module, which in turn requires the Operator to be installed. On later updates of an existing Operator installation, you may source the annotation from the output instead. Restart the Operator after changing the annotation.
+
 ```hcl
 locals {
   operator_iam_role_name = "humanitec-operator-my-awssm"
