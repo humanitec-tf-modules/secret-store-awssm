@@ -18,7 +18,7 @@ You can also bring your own IAM role or IAM user instead of having the module cr
 
 Prerequisites:
 
-- The Humanitec Operator is installed on the cluster before you plan the module. See [Installation order](#installation-order)
+- The Humanitec Operator is installed on the cluster, either beforehand or in the same configuration as the module. See [Installation order](#installation-order)
 - If you use EKS Pod Identity, the [EKS Pod Identity Agent](https://docs.aws.amazon.com/eks/latest/userguide/pod-id-agent-setup.html) add-on is installed on the EKS cluster
 - If you use IRSA and let the module create the IAM role, an [IAM OIDC provider](https://docs.aws.amazon.com/eks/latest/userguide/enable-iam-roles-for-service-accounts.html) exists for the EKS cluster in the account of the `aws` provider
 - For an Environment-local secret store, the Environment namespace exists
@@ -27,14 +27,21 @@ The Secrets Manager is located in the AWS account of the `aws` provider passed i
 
 ## Installation order
 
-The module creates the `SecretStore` resource using a `kubernetes_manifest`, which reads the `SecretStore` custom resource definition (CRD) from the cluster during planning. The Humanitec Operator Helm chart installs this CRD. Therefore, the Operator must already be installed when you plan the module.
+The module creates the `SecretStore` resource using a `kubernetes_manifest`, which reads the `SecretStore` custom resource definition (CRD) from the cluster during planning. The Humanitec Operator installs this CRD.
 
-If you install the Operator in the same OpenTofu/Terraform configuration as the present module, e.g. via a `helm_release`, apply the Operator before you add the module, e.g. in a separate stage or using `-target`. Adding a `depends_on` on the module is not sufficient, as the CRD is required during planning already.
+So that you can install the Operator in the same OpenTofu/Terraform configuration as the module, the module checks for the CRD during planning. If the CRD is missing, the module skips the `SecretStore` and the Kubernetes Secret holding IAM user credentials. It still creates the AWS objects, shows the warning `SecretStore CRD not found`, and returns `false` in the `secret_store_ready` output.
+
+On a new cluster, this takes two consecutive applies without any configuration change in between:
+
+1. The first apply installs the Operator, and with it the CRD, and creates the AWS objects. The warning is expected.
+2. The second apply finds the CRD and creates the `SecretStore`.
+
+If the Operator is already installed, a single apply is sufficient.
 
 > [!NOTE]
 > **Architectural decision**
 > 
-> A provider such as [alekc/kubectl](https://registry.terraform.io/providers/alekc/kubectl), which does not require the CRD to exist at plan time, would allow a single apply. However, it would introduce another external community provider, require users to configure and pass in a third provider, and require an additional module input to order the SecretStore after the Operator installation. It would also need retry handling, as a newly installed CRD can take a moment before the API server accepts resources of its type. The module therefore accepts the two-pass limitation. It only applies when the Operator is installed in the same run as the module, e.g. on a new cluster.
+> A provider such as [alekc/kubectl](https://registry.terraform.io/providers/alekc/kubectl), which does not require the CRD to exist at plan time, would allow a single apply. However, it would introduce another external community provider, require users to configure and pass in a third provider, and require an additional module input to order the SecretStore after the Operator installation. It would also need retry handling, as a newly installed CRD can take a moment before the API server accepts resources of its type. The module therefore checks for the CRD instead and accepts a second apply when the Operator is installed in the same run as the module, e.g. on a new cluster.
 
 With IRSA, the Operator service account also needs an annotation with the ARN of the IAM role. See [Use IRSA](#use-irsa) for how to provide it.
 
@@ -65,11 +72,13 @@ kubectl rollout restart deployment -n humanitec-operator-system humanitec-operat
 
 ### Use IRSA
 
-With IRSA, the Operator service account must be annotated with the ARN of the IAM role it assumes. The module does not modify the Operator installation, so you need to set the annotation when you install the Operator, which happens before the module runs (see [Installation order](#installation-order)).
+With IRSA, the Operator service account must be annotated with the ARN of the IAM role it assumes. The module does not modify the Operator installation, so you need to set the annotation in the Operator installation.
 
-Set a fixed `iam_role_name` so that you know the ARN of the IAM role at that point. Without it, the module generates a name with a random suffix that is only known after the module has run. Once the module has created the IAM role, the Operator can assume it without any further changes.
+If you install the Operator in the same configuration as the module, set the annotation from the `operator_serviceaccount_annotations` output of the module. The first apply then creates the IAM role before it installs the Operator with the annotation (see [Installation order](#installation-order)).
 
-The module also returns the annotation in its `operator_serviceaccount_annotations` output. You cannot use the output for the initial installation of the Operator, as the Operator would then depend on the module, which in turn requires the Operator to be installed. On later updates of an existing Operator installation, you may source the annotation from the output instead. Restart the Operator after changing the annotation.
+If you install the Operator separately and before the module, set a fixed `iam_role_name` so that you know the ARN of the IAM role at that point. Without it, the module generates a name with a random suffix that is only known after the module has run. Once the module has created the IAM role, the Operator can assume it without any further changes.
+
+If you change the annotation of a running Operator, restart the Operator.
 
 ```hcl
 locals {
@@ -455,6 +464,7 @@ No modules.
 | [aws_iam_user.operator](https://registry.terraform.io/providers/hashicorp/aws/latest/docs/data-sources/iam_user) | data source |
 | [aws_partition.current](https://registry.terraform.io/providers/hashicorp/aws/latest/docs/data-sources/partition) | data source |
 | [aws_region.current](https://registry.terraform.io/providers/hashicorp/aws/latest/docs/data-sources/region) | data source |
+| [kubernetes_resources.secret_store_crd](https://registry.terraform.io/providers/hashicorp/kubernetes/latest/docs/data-sources/resources) | data source |
 
 ## Inputs
 
@@ -514,5 +524,6 @@ No modules.
 | <a name="output_pod_identity_association_id"></a> [pod\_identity\_association\_id](#output\_pod\_identity\_association\_id) | ID of the EKS Pod Identity association created by the module. Returns `null` if `auth_method` is not `pod_identity` or `pod_identity_association_create` is `false`. |
 | <a name="output_secret_store_id"></a> [secret\_store\_id](#output\_secret\_store\_id) | ID of the secret store, i.e. the name of the Kubernetes `SecretStore` resource. This is either `secret_store_id` or the generated ID. Use it as the `store` in secret references. |
 | <a name="output_secret_store_namespace"></a> [secret\_store\_namespace](#output\_secret\_store\_namespace) | Name of the Kubernetes namespace of the `SecretStore` resource. This is the Operator namespace for a cluster-wide store, or the Environment namespace for an Environment-local store. |
+| <a name="output_secret_store_ready"></a> [secret\_store\_ready](#output\_secret\_store\_ready) | Whether the module manages the `SecretStore` resource. This is `false` if the `SecretStore` CRD was not present on the cluster during planning. In that case, apply the configuration again once the Operator is installed. See [Installation order](#installation-order). |
 | <a name="output_secrets_manager_region"></a> [secrets\_manager\_region](#output\_secrets\_manager\_region) | AWS region of the Secrets Manager. |
 <!-- END_TF_DOCS -->

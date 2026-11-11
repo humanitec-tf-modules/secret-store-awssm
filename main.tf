@@ -320,8 +320,9 @@ resource "terraform_data" "iam_user_access_key_id" {
 
 # Kubernetes Secret holding the IAM user credentials, in the namespace of the secret store referencing it.
 # The credentials are written via the write-only data_wo attribute so that they are not stored in the state.
+# Like the secret store, it waits for the SecretStore CRD, as the Operator namespace may not exist before that.
 resource "kubernetes_secret_v1" "operator_credentials" {
-  count = local.use_iam_user ? 1 : 0
+  count = local.use_iam_user && local.secret_store_crd_ready ? 1 : 0
   metadata {
     name      = local.iam_user_credentials_secret_name
     namespace = local.secret_store_namespace
@@ -341,7 +342,30 @@ resource "kubernetes_secret_v1" "operator_credentials" {
 
 # Secret store registration with the Operator
 
+# Guard against the "secretstores" CRD not yet being present on the cluster
+data "kubernetes_resources" "secret_store_crd" {
+  api_version    = "apiextensions.k8s.io/v1"
+  kind           = "CustomResourceDefinition"
+  field_selector = "metadata.name=secretstores.humanitec.io"
+}
+
+locals {
+  secret_store_crd_ready = length([
+    for crd in data.kubernetes_resources.secret_store_crd.objects : crd
+    if try(crd.metadata.deletionTimestamp, null) == null
+  ]) > 0
+}
+
+# Shown as a warning in plan/apply output, does not fail the run
+check "secret_store_crd" {
+  assert {
+    condition     = local.secret_store_crd_ready
+    error_message = "SecretStore CRD not found: the SecretStore object on the cluster was not created. Run apply again once the Operator is installed."
+  }
+}
+
 resource "kubernetes_manifest" "secret_store" {
+  count = local.secret_store_crd_ready ? 1 : 0
   manifest = {
     apiVersion = "humanitec.io/v1alpha1"
     kind       = "SecretStore"

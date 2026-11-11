@@ -1,5 +1,12 @@
 # Mock all providers so the tests run without access to AWS or a Kubernetes cluster
-mock_provider "kubernetes" {}
+mock_provider "kubernetes" {
+  # The SecretStore CRD is present on the cluster
+  mock_data "kubernetes_resources" {
+    defaults = {
+      objects = [{ metadata = { name = "secretstores.humanitec.io" } }]
+    }
+  }
+}
 mock_provider "random" {
   # The mocked result does not honor the length attribute
   mock_resource "random_string" {
@@ -214,28 +221,28 @@ run "defaults" {
   # Secret store
   assert {
     condition = (
-      kubernetes_manifest.secret_store.manifest.apiVersion == "humanitec.io/v1alpha1" &&
-      kubernetes_manifest.secret_store.manifest.kind == "SecretStore"
+      kubernetes_manifest.secret_store[0].manifest.apiVersion == "humanitec.io/v1alpha1" &&
+      kubernetes_manifest.secret_store[0].manifest.kind == "SecretStore"
     )
     error_message = "Secret store should be a humanitec.io/v1alpha1 SecretStore"
   }
   assert {
     condition = (
-      kubernetes_manifest.secret_store.manifest.metadata.name == "my-awssm" &&
-      kubernetes_manifest.secret_store.manifest.metadata.namespace == "humanitec-operator-system"
+      kubernetes_manifest.secret_store[0].manifest.metadata.name == "my-awssm" &&
+      kubernetes_manifest.secret_store[0].manifest.metadata.namespace == "humanitec-operator-system"
     )
     error_message = "Secret store should be named secret_store_id and be cluster-wide in the Operator namespace by default"
   }
   assert {
-    condition     = kubernetes_manifest.secret_store.manifest.metadata.labels["app.humanitec.io/default-store"] == "true" && length(kubernetes_manifest.secret_store.manifest.metadata.labels) == 1
+    condition     = kubernetes_manifest.secret_store[0].manifest.metadata.labels["app.humanitec.io/default-store"] == "true" && length(kubernetes_manifest.secret_store[0].manifest.metadata.labels) == 1
     error_message = "Secret store should be labelled as the default store by default"
   }
   assert {
-    condition     = kubernetes_manifest.secret_store.manifest.spec.awssm.region == "eu-west-1"
+    condition     = kubernetes_manifest.secret_store[0].manifest.spec.awssm.region == "eu-west-1"
     error_message = "Secret store should use the region of the aws provider by default"
   }
   assert {
-    condition     = kubernetes_manifest.secret_store.manifest.spec.awssm.auth == {}
+    condition     = kubernetes_manifest.secret_store[0].manifest.spec.awssm.auth == {}
     error_message = "Secret store should have an empty auth object with an IAM role. A map cannot be converted to the SecretStore CRD schema by kubernetes_manifest"
   }
 
@@ -380,7 +387,7 @@ run "irsa" {
 
   # Secret store
   assert {
-    condition     = kubernetes_manifest.secret_store.manifest.spec.awssm.auth == {}
+    condition     = kubernetes_manifest.secret_store[0].manifest.spec.awssm.auth == {}
     error_message = "Secret store should have an empty auth object with IRSA. A map cannot be converted to the SecretStore CRD schema by kubernetes_manifest"
   }
 
@@ -421,8 +428,8 @@ run "generated_secret_store_id" {
     error_message = "The random suffix of the secret store ID should consist of lowercase letters only"
   }
   assert {
-    condition     = kubernetes_manifest.secret_store.manifest.metadata.name == "awssm-abcd"
-    error_message = "Secret store ID should be generated as awssm-<random>, got ${kubernetes_manifest.secret_store.manifest.metadata.name}"
+    condition     = kubernetes_manifest.secret_store[0].manifest.metadata.name == "awssm-abcd"
+    error_message = "Secret store ID should be generated as awssm-<random>, got ${kubernetes_manifest.secret_store[0].manifest.metadata.name}"
   }
   assert {
     condition     = output.secret_store_id == "awssm-abcd"
@@ -457,11 +464,11 @@ run "non_default_store" {
   }
 
   assert {
-    condition     = !can(kubernetes_manifest.secret_store.manifest.metadata.labels)
+    condition     = !can(kubernetes_manifest.secret_store[0].manifest.metadata.labels)
     error_message = "Non-default secret store should not be labelled as the default store"
   }
   assert {
-    condition     = kubernetes_manifest.secret_store.manifest.metadata.namespace == "humanitec-operator-system"
+    condition     = kubernetes_manifest.secret_store[0].manifest.metadata.namespace == "humanitec-operator-system"
     error_message = "Non-default secret store should still be cluster-wide by default"
   }
   assert {
@@ -507,11 +514,11 @@ run "environment_local_store" {
   }
 
   assert {
-    condition     = kubernetes_manifest.secret_store.manifest.metadata.namespace == "my-app-development"
+    condition     = kubernetes_manifest.secret_store[0].manifest.metadata.namespace == "my-app-development"
     error_message = "Environment-local secret store should be created in secret_store_namespace"
   }
   assert {
-    condition     = !can(kubernetes_manifest.secret_store.manifest.metadata.labels)
+    condition     = !can(kubernetes_manifest.secret_store[0].manifest.metadata.labels)
     error_message = "Environment-local secret store should not be labelled as the default store"
   }
   assert {
@@ -647,9 +654,9 @@ run "complete_create_role_irsa" {
   # Secret store
   assert {
     condition = (
-      kubernetes_manifest.secret_store.manifest.metadata.name == "complete-awssm" &&
-      kubernetes_manifest.secret_store.manifest.metadata.namespace == "my-operator" &&
-      kubernetes_manifest.secret_store.manifest.spec.awssm.region == "us-east-1"
+      kubernetes_manifest.secret_store[0].manifest.metadata.name == "complete-awssm" &&
+      kubernetes_manifest.secret_store[0].manifest.metadata.namespace == "my-operator" &&
+      kubernetes_manifest.secret_store[0].manifest.spec.awssm.region == "us-east-1"
     )
     error_message = "Secret store should use secret_store_id, operator_namespace and secrets_manager_region"
   }
@@ -803,7 +810,7 @@ run "complete_create_user" {
 
   # Secret store
   assert {
-    condition = kubernetes_manifest.secret_store.manifest.spec.awssm.auth == {
+    condition = kubernetes_manifest.secret_store[0].manifest.spec.awssm.auth == {
       accessKeyIDSecretRef     = { name = "my-credentials", key = "access_key_id" }
       secretAccessKeySecretRef = { name = "my-credentials", key = "secret_access_key" }
     }
@@ -1075,6 +1082,84 @@ run "existing_role_in_other_partition" {
   assert {
     condition     = data.aws_iam_role.operator[0].name == "existing-role"
     error_message = "Existing IAM role should be read from an ARN in a partition other than aws"
+  }
+}
+
+# SecretStore CRD not yet present on the cluster
+
+run "missing_crd" {
+  command = apply
+
+  override_data {
+    target = data.kubernetes_resources.secret_store_crd
+    values = {
+      objects = []
+    }
+  }
+
+  # The check only warns, so the run continues
+  expect_failures = [check.secret_store_crd]
+
+  assert {
+    condition     = length(kubernetes_manifest.secret_store) == 0
+    error_message = "SecretStore should not be created without the CRD"
+  }
+  assert {
+    condition     = output.secret_store_ready == false
+    error_message = "secret_store_ready output should be false without the CRD"
+  }
+  assert {
+    condition     = output.secret_store_id == "my-awssm" && output.secret_store_namespace == "humanitec-operator-system"
+    error_message = "Secret store outputs should be set without the CRD"
+  }
+  assert {
+    condition     = length(aws_iam_role.operator) == 1 && length(aws_eks_pod_identity_association.operator) == 1
+    error_message = "AWS objects should be created without the CRD"
+  }
+}
+
+run "missing_crd_with_user" {
+  command = apply
+
+  variables {
+    auth_method      = "iam_user"
+    eks_cluster_name = null
+  }
+
+  override_data {
+    target = data.kubernetes_resources.secret_store_crd
+    values = {
+      objects = []
+    }
+  }
+
+  expect_failures = [check.secret_store_crd]
+
+  assert {
+    condition     = length(kubernetes_secret_v1.operator_credentials) == 0
+    error_message = "Credentials Secret should not be created without the CRD, as the namespace may not exist"
+  }
+  assert {
+    condition     = length(aws_iam_user.operator) == 1 && length(aws_iam_access_key.operator) == 1
+    error_message = "IAM user and access key should be created without the CRD"
+  }
+}
+
+run "crd_being_deleted" {
+  command = apply
+
+  override_data {
+    target = data.kubernetes_resources.secret_store_crd
+    values = {
+      objects = [{ metadata = { name = "secretstores.humanitec.io", deletionTimestamp = "2026-01-01T00:00:00Z" } }]
+    }
+  }
+
+  expect_failures = [check.secret_store_crd]
+
+  assert {
+    condition     = length(kubernetes_manifest.secret_store) == 0
+    error_message = "SecretStore should not be created while the CRD is being deleted"
   }
 }
 
