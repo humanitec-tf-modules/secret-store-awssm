@@ -62,6 +62,9 @@ locals {
 
   cross_account_secret_arns  = distinct([for s in var.cross_account_secrets : s.secret_arn])
   cross_account_kms_key_arns = distinct([for s in var.cross_account_secrets : s.kms_key_arn])
+  # The Operator may only use the KMS keys of cross-account secrets via Secrets Manager, in any region.
+  # The DNS suffix depends on the partition, e.g. "amazonaws.com.cn" in China.
+  kms_via_secrets_manager = "secretsmanager.*.${data.aws_partition.current.dns_suffix}"
 
   # AWS limits IAM role and user names to 64 characters, and IAM policy names to 128 characters.
   # Truncate the prefix so the "-" separator and the full random suffix always fit.
@@ -174,6 +177,11 @@ data "aws_iam_policy_document" "operator" {
       effect    = "Allow"
       actions   = ["kms:Decrypt"]
       resources = local.cross_account_kms_key_arns
+      condition {
+        test     = "StringLike"
+        variable = "kms:ViaService"
+        values   = [local.kms_via_secrets_manager]
+      }
     }
   }
 }
@@ -419,5 +427,10 @@ data "aws_iam_policy_document" "cross_account_kms_key_policy" {
       "kms:DescribeKey",
     ]
     resources = ["*"]
+    condition {
+      test     = "StringLike"
+      variable = "kms:ViaService"
+      values   = [local.kms_via_secrets_manager]
+    }
   }
 }

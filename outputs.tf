@@ -82,6 +82,6 @@ output "cross_account_secret_resource_policy" {
   value       = data.aws_iam_policy_document.cross_account_secret_resource_policy.json
 }
 output "cross_account_kms_key_policy" {
-  description = "Key policy statement allowing the Operator to decrypt a secret, as a policy document in JSON format. Add it to the key policy of the KMS key encrypting each secret in another AWS account you want to reference, e.g. via the `source_policy_documents` of an `aws_iam_policy_document`. Do not use it as the complete key policy."
+  description = "Key policy statement allowing the Operator to decrypt a secret, only via Secrets Manager, as a policy document in JSON format. Add it to the key policy of the KMS key encrypting each secret in another AWS account you want to reference, e.g. via the `source_policy_documents` of an `aws_iam_policy_document`. Do not use it as the complete key policy."
   value       = data.aws_iam_policy_document.cross_account_kms_key_policy.json
 }

@@ -23,7 +23,8 @@ mock_provider "aws" {
   }
   mock_data "aws_partition" {
     defaults = {
-      partition = "aws"
+      partition  = "aws"
+      dns_suffix = "amazonaws.com"
     }
   }
   mock_data "aws_region" {
@@ -971,6 +972,39 @@ run "cross_account_secrets" {
       [for p in data.aws_iam_policy_document.cross_account_kms_key_policy.statement[0].principals : toset(p.identifiers)] == [toset(["arn:aws:iam::123456789012:role/created-role"])]
     )
     error_message = "Cross-account KMS key policy should allow the Operator to decrypt and describe the key"
+  }
+  assert {
+    condition = (
+      [for c in data.aws_iam_policy_document.operator.statement[2].condition : { test = c.test, variable = c.variable, values = toset(c.values) }] == [{ test = "StringLike", variable = "kms:ViaService", values = toset(["secretsmanager.*.amazonaws.com"]) }] &&
+      [for c in data.aws_iam_policy_document.cross_account_kms_key_policy.statement[0].condition : { test = c.test, variable = c.variable, values = toset(c.values) }] == [{ test = "StringLike", variable = "kms:ViaService", values = toset(["secretsmanager.*.amazonaws.com"]) }]
+    )
+    error_message = "IAM policy and cross-account KMS key policy should only allow using the KMS keys via Secrets Manager"
+  }
+}
+
+run "cross_account_secrets_in_china" {
+  command = apply
+
+  override_data {
+    target = data.aws_partition.current
+    values = {
+      partition  = "aws-cn"
+      dns_suffix = "amazonaws.com.cn"
+    }
+  }
+
+  variables {
+    cross_account_secrets = [
+      {
+        secret_arn  = "arn:aws-cn:secretsmanager:cn-north-1:210987654321:secret:my-secret-AbCdEf"
+        kms_key_arn = "arn:aws-cn:kms:cn-north-1:210987654321:key/1234abcd-12ab-34cd-56ef-1234567890ab"
+      },
+    ]
+  }
+
+  assert {
+    condition     = local.kms_via_secrets_manager == "secretsmanager.*.amazonaws.com.cn"
+    error_message = "kms:ViaService condition should use the DNS suffix of the partition, got ${local.kms_via_secrets_manager}"
   }
 }
 
