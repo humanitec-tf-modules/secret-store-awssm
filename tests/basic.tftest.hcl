@@ -1174,6 +1174,10 @@ run "missing_crd_with_user" {
     error_message = "Credentials Secret should not be created without the CRD, as the namespace may not exist"
   }
   assert {
+    condition     = output.iam_user_credentials_secret_name == "my-awssm-credentials"
+    error_message = "Credentials Secret name output should be set without the CRD, like the secret store outputs"
+  }
+  assert {
     condition     = length(aws_iam_user.operator) == 1 && length(aws_iam_access_key.operator) == 1
     error_message = "IAM user and access key should be created without the CRD"
   }

@@ -75,7 +75,8 @@ output "iam_user_unique_id" {
 }
 output "iam_user_credentials_secret_name" {
   description = "Name of the Kubernetes Secret holding the access key of the IAM user, located in the `secret_store_namespace`. Returns `null` if `auth_method` is not `iam_user`."
-  value       = one(kubernetes_secret_v1.operator_credentials[*].metadata[0].name)
+  value       = local.iam_user_credentials_secret_name
+  depends_on  = [kubernetes_secret_v1.operator_credentials]
 }
 output "cross_account_secret_resource_policy" {
   description = "Resource policy allowing the Operator to read a secret, in JSON format. Attach it to each secret in another AWS account you want to reference."
