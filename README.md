@@ -31,17 +31,19 @@ The module creates the `SecretStore` resource using a `kubernetes_manifest`, whi
 
 So that you can install the Operator in the same OpenTofu/Terraform configuration as the module, the module checks for the CRD during planning. If the CRD is missing, the module skips the `SecretStore` and the Kubernetes Secret holding IAM user credentials. It still creates the AWS objects, shows the warning `SecretStore CRD not found`, and returns `false` in the `secret_store_ready` output.
 
-On a new cluster, this takes two consecutive applies without any configuration change in between:
+If you install the Operator in the same run as the module, this takes two consecutive applies without any configuration change in between:
 
 1. The first apply installs the Operator, and with it the CRD, and creates the AWS objects. The warning is expected.
 2. The second apply finds the CRD and creates the `SecretStore`.
 
 If the Operator is already installed, a single apply is sufficient.
 
+The cluster itself must already exist when you plan the module, as the `kubernetes` provider needs to connect to it. If the same configuration also creates the cluster, apply the cluster first, e.g. using `-target`.
+
 > [!NOTE]
 > **Architectural decision**
 > 
-> A provider such as [alekc/kubectl](https://registry.terraform.io/providers/alekc/kubectl), which does not require the CRD to exist at plan time, would allow a single apply. However, it would introduce another external community provider, require users to configure and pass in a third provider, and require an additional module input to order the SecretStore after the Operator installation. It would also need retry handling, as a newly installed CRD can take a moment before the API server accepts resources of its type. The module therefore checks for the CRD instead and accepts a second apply when the Operator is installed in the same run as the module, e.g. on a new cluster.
+> A provider such as [alekc/kubectl](https://registry.terraform.io/providers/alekc/kubectl), which does not require the CRD to exist at plan time, would allow a single apply. However, it would introduce another external community provider, require users to configure and pass in a third provider, and require an additional module input to order the SecretStore after the Operator installation. It would also need retry handling, as a newly installed CRD can take a moment before the API server accepts resources of its type. The module therefore checks for the CRD instead and accepts a second apply when the Operator is installed in the same run as the module.
 
 With IRSA, the Operator service account also needs an annotation with the ARN of the IAM role. See [Use IRSA](#use-irsa) for how to provide it.
 
