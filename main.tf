@@ -26,6 +26,13 @@ locals {
   use_iam_role     = local.use_pod_identity || local.use_irsa
   use_iam_user     = var.auth_method == "iam_user"
 
+  # Whether the module creates the IAM role or user, or uses an existing one.
+  # Also used by the variable validations, so that they match the resource counts.
+  create_iam_role       = local.use_iam_role && var.iam_role_create
+  use_existing_iam_role = local.use_iam_role && !var.iam_role_create
+  create_iam_user       = local.use_iam_user && var.iam_user_create
+  use_existing_iam_user = local.use_iam_user && !var.iam_user_create
+
   # ID of the secret store: the ID passed in, or the generated ID
   secret_store_id = var.secret_store_id != null ? var.secret_store_id : "awssm-${random_string.secret_store_id_suffix[0].result}"
 
@@ -73,8 +80,8 @@ locals {
   iam_name_prefix     = substr("humanitec-operator-${local.secret_store_id}", 0, local.iam_name_max_length - 5)
   iam_name_suffix_required = (
     var.iam_policy_name == null ||
-    (local.use_iam_role && var.iam_role_create && var.iam_role_name == null) ||
-    (local.use_iam_user && var.iam_user_create && var.iam_user_name == null)
+    (local.create_iam_role && var.iam_role_name == null) ||
+    (local.create_iam_user && var.iam_user_name == null)
   )
   iam_generated_name = local.iam_name_suffix_required ? "${local.iam_name_prefix}-${random_string.iam_name_suffix[0].result}" : null
 
@@ -109,8 +116,8 @@ locals {
 
   # Credentials of the IAM user, either from the access key created by the module or passed in.
   # The secret access key is ephemeral if passed in, and is only ever written to write-only attributes.
-  iam_user_access_key_id     = var.iam_user_create ? one(aws_iam_access_key.operator[*].id) : var.iam_user_access_key_id
-  iam_user_secret_access_key = var.iam_user_create ? one(aws_iam_access_key.operator[*].secret) : var.iam_user_secret_access_key
+  iam_user_access_key_id     = local.create_iam_user ? one(aws_iam_access_key.operator[*].id) : var.iam_user_access_key_id
+  iam_user_secret_access_key = local.create_iam_user ? one(aws_iam_access_key.operator[*].secret) : var.iam_user_secret_access_key
   iam_user_credentials_secret_name = (
     local.use_iam_user
     ? coalesce(var.iam_user_credentials_secret_name, "${local.secret_store_id}-credentials")
@@ -250,7 +257,7 @@ data "aws_iam_policy_document" "operator_irsa_trust" {
 }
 
 resource "aws_iam_role" "operator" {
-  count                = local.use_iam_role && var.iam_role_create ? 1 : 0
+  count                = local.create_iam_role ? 1 : 0
   name                 = coalesce(var.iam_role_name, local.iam_generated_name)
   path                 = var.iam_role_path
   description          = "Humanitec Operator access to the AWS Secrets Manager secret store ${local.secret_store_id}"
@@ -260,7 +267,7 @@ resource "aws_iam_role" "operator" {
 }
 
 data "aws_iam_role" "operator" {
-  count = local.use_iam_role && !var.iam_role_create ? 1 : 0
+  count = local.use_existing_iam_role ? 1 : 0
   name  = local.existing_role_arn_parts.name
 
   lifecycle {
@@ -288,7 +295,7 @@ resource "aws_eks_pod_identity_association" "operator" {
 # IAM user with static credentials (auth_method = "iam_user")
 
 resource "aws_iam_user" "operator" {
-  count                = local.use_iam_user && var.iam_user_create ? 1 : 0
+  count                = local.create_iam_user ? 1 : 0
   name                 = coalesce(var.iam_user_name, local.iam_generated_name)
   path                 = var.iam_user_path
   permissions_boundary = var.iam_user_permissions_boundary_arn
@@ -301,7 +308,7 @@ resource "aws_iam_access_key" "operator" {
 }
 
 data "aws_iam_user" "operator" {
-  count     = local.use_iam_user && !var.iam_user_create ? 1 : 0
+  count     = local.use_existing_iam_user ? 1 : 0
   user_name = local.existing_user_arn_parts.name
 
   lifecycle {

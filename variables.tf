@@ -147,7 +147,7 @@ variable "iam_role_name" {
   default     = null
 
   validation {
-    condition     = var.iam_role_name == null || (contains(["pod_identity", "irsa"], var.auth_method) && var.iam_role_create)
+    condition     = var.iam_role_name == null || local.create_iam_role
     error_message = "iam_role_name must only be set if auth_method is pod_identity or irsa, and iam_role_create is true. Use iam_role_arn to pass in an existing IAM role"
   }
 }
@@ -158,7 +158,7 @@ variable "iam_role_path" {
   default     = null
 
   validation {
-    condition     = var.iam_role_path == null || (contains(["pod_identity", "irsa"], var.auth_method) && var.iam_role_create)
+    condition     = var.iam_role_path == null || local.create_iam_role
     error_message = "iam_role_path must only be set if auth_method is pod_identity or irsa, and iam_role_create is true"
   }
 
@@ -174,7 +174,7 @@ variable "iam_role_permissions_boundary_arn" {
   default     = null
 
   validation {
-    condition     = var.iam_role_permissions_boundary_arn == null || (contains(["pod_identity", "irsa"], var.auth_method) && var.iam_role_create)
+    condition     = var.iam_role_permissions_boundary_arn == null || local.create_iam_role
     error_message = "iam_role_permissions_boundary_arn must only be set if auth_method is pod_identity or irsa, and iam_role_create is true"
   }
 }
@@ -185,7 +185,7 @@ variable "iam_role_tags" {
   default     = null
 
   validation {
-    condition     = var.iam_role_tags == null || (contains(["pod_identity", "irsa"], var.auth_method) && var.iam_role_create)
+    condition     = var.iam_role_tags == null || local.create_iam_role
     error_message = "iam_role_tags must only be set if auth_method is pod_identity or irsa, and iam_role_create is true"
   }
 }
@@ -196,7 +196,7 @@ variable "iam_role_arn" {
   default     = null
 
   validation {
-    condition     = (contains(["pod_identity", "irsa"], var.auth_method) && !var.iam_role_create) == (var.iam_role_arn != null)
+    condition     = local.use_existing_iam_role == (var.iam_role_arn != null)
     error_message = "iam_role_arn must be set if auth_method is pod_identity or irsa, and iam_role_create is false. It must not be set otherwise"
   }
 
@@ -218,17 +218,17 @@ variable "eks_cluster_name" {
   default     = null
 
   validation {
-    condition     = !(var.auth_method == "pod_identity" && var.pod_identity_association_create) || var.eks_cluster_name != null
+    condition     = !(local.use_pod_identity && var.pod_identity_association_create) || var.eks_cluster_name != null
     error_message = "eks_cluster_name must be set if auth_method is pod_identity and pod_identity_association_create is true"
   }
 
   validation {
-    condition     = !(var.auth_method == "irsa" && var.iam_role_create) || var.eks_cluster_name != null
+    condition     = !(local.use_irsa && var.iam_role_create) || var.eks_cluster_name != null
     error_message = "eks_cluster_name must be set if auth_method is irsa and iam_role_create is true"
   }
 
   validation {
-    condition     = var.auth_method != "iam_user" || var.eks_cluster_name == null
+    condition     = !local.use_iam_user || var.eks_cluster_name == null
     error_message = "eks_cluster_name must not be set if auth_method is iam_user"
   }
 }
@@ -248,7 +248,7 @@ variable "iam_user_name" {
   default     = null
 
   validation {
-    condition     = var.iam_user_name == null || (var.auth_method == "iam_user" && var.iam_user_create)
+    condition     = var.iam_user_name == null || local.create_iam_user
     error_message = "iam_user_name must only be set if auth_method is iam_user and iam_user_create is true. Use iam_user_arn to pass in an existing IAM user"
   }
 }
@@ -259,7 +259,7 @@ variable "iam_user_path" {
   default     = null
 
   validation {
-    condition     = var.iam_user_path == null || (var.auth_method == "iam_user" && var.iam_user_create)
+    condition     = var.iam_user_path == null || local.create_iam_user
     error_message = "iam_user_path must only be set if auth_method is iam_user and iam_user_create is true"
   }
 
@@ -275,7 +275,7 @@ variable "iam_user_permissions_boundary_arn" {
   default     = null
 
   validation {
-    condition     = var.iam_user_permissions_boundary_arn == null || (var.auth_method == "iam_user" && var.iam_user_create)
+    condition     = var.iam_user_permissions_boundary_arn == null || local.create_iam_user
     error_message = "iam_user_permissions_boundary_arn must only be set if auth_method is iam_user and iam_user_create is true"
   }
 }
@@ -286,7 +286,7 @@ variable "iam_user_tags" {
   default     = null
 
   validation {
-    condition     = var.iam_user_tags == null || (var.auth_method == "iam_user" && var.iam_user_create)
+    condition     = var.iam_user_tags == null || local.create_iam_user
     error_message = "iam_user_tags must only be set if auth_method is iam_user and iam_user_create is true"
   }
 }
@@ -297,7 +297,7 @@ variable "iam_user_arn" {
   default     = null
 
   validation {
-    condition     = (var.auth_method == "iam_user" && !var.iam_user_create) == (var.iam_user_arn != null)
+    condition     = local.use_existing_iam_user == (var.iam_user_arn != null)
     error_message = "iam_user_arn must be set if auth_method is iam_user and iam_user_create is false, and must not be set otherwise"
   }
 
@@ -313,7 +313,7 @@ variable "iam_user_access_key_id" {
   default     = null
 
   validation {
-    condition     = (var.auth_method == "iam_user" && !var.iam_user_create) == (var.iam_user_access_key_id != null)
+    condition     = local.use_existing_iam_user == (var.iam_user_access_key_id != null)
     error_message = "iam_user_access_key_id must be set if auth_method is iam_user and iam_user_create is false, and must not be set otherwise"
   }
 }
@@ -328,7 +328,7 @@ variable "iam_user_secret_access_key" {
   default     = ""
 
   validation {
-    condition     = (var.auth_method == "iam_user" && !var.iam_user_create) == (var.iam_user_secret_access_key != "")
+    condition     = local.use_existing_iam_user == (var.iam_user_secret_access_key != "")
     error_message = "iam_user_secret_access_key must be set if auth_method is iam_user and iam_user_create is false, and must be empty otherwise"
   }
 }
@@ -339,7 +339,7 @@ variable "iam_user_credentials_secret_name" {
   default     = null
 
   validation {
-    condition     = var.iam_user_credentials_secret_name == null || var.auth_method == "iam_user"
+    condition     = var.iam_user_credentials_secret_name == null || local.use_iam_user
     error_message = "iam_user_credentials_secret_name must only be set if auth_method is iam_user"
   }
 }
